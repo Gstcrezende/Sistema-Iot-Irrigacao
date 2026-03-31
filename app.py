@@ -26,14 +26,12 @@ CIDADE = "Franca,BR"
 # =====================
 # BANCO DE DADOS (RENDER)
 # =====================
-# Usando a URL Interna conforme seu print
 DB_URL = "postgresql://database_42u1_user:izGbmDSbHtKdcXlbC5X2pPTBGlfEmoPK@dpg-d75tu5haae7s73cvc45g-a/database_42u1"
 
 def init_db():
     try:
         conn = psycopg2.connect(DB_URL)
         cursor = conn.cursor()
-        # Cria a tabela de histórico se ela não existir
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS leituras (
                 id SERIAL PRIMARY KEY,
@@ -46,9 +44,28 @@ def init_db():
         conn.commit()
         cursor.close()
         conn.close()
-        print("✅ Banco de dados PostgreSQL conectado e tabela verificada!")
+        print("✅ Banco de dados conectado e tabela verificada!")
     except Exception as e:
         print("🔥 ERRO NO BANCO DE DADOS:", e)
+
+def carregar_ultimo_estado():
+    """Busca a última leitura do banco para não iniciar com zero"""
+    global dados
+    try:
+        conn = psycopg2.connect(DB_URL)
+        cursor = conn.cursor()
+        cursor.execute("SELECT solo, temp, irrigacao FROM leituras ORDER BY id DESC LIMIT 1")
+        linha = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        
+        if linha:
+            dados["solo"] = linha[0]
+            dados["temp"] = linha[1]
+            dados["irrigacao"] = linha[2]
+            print(f"🔄 Último estado recuperado: Solo {linha[0]}% | Temp {linha[1]}°C")
+    except Exception as e:
+        print("🔥 ERRO AO CARREGAR ÚLTIMO ESTADO:", e)
 
 def salvar_no_banco(solo, temp, irrigacao):
     try:
@@ -88,7 +105,7 @@ regras = {
 }
 
 ultima_busca_clima = 0
-ultima_gravacao_db = 0  # Controle para não floodar o banco de dados
+ultima_gravacao_db = 0
 
 # =====================
 # CLIMA E IRRIGAÇÃO
@@ -132,19 +149,16 @@ def on_connect(client, userdata, flags, rc):
 
 def on_message(client, userdata, msg):
     global dados, ultima_gravacao_db
-
     try:
         payload = json.loads(msg.payload.decode())
-
         dados["solo"] = payload.get("solo", 0)
         dados["temp"] = payload.get("temp", 0)
 
         estado = decidir_irrigacao()
         dados["irrigacao"] = estado
-
         client.publish(TOPIC_CONTROLE, estado)
 
-        # 🔥 Salva no banco de dados a cada 5 minutos (300 segundos)
+        # Salva no banco a cada 5 minutos (300 segundos)
         agora = time.time()
         if agora - ultima_gravacao_db > 300:
             salvar_no_banco(dados["solo"], dados["temp"], estado)
@@ -177,13 +191,34 @@ def index():
 def get_dados():
     global ultima_busca_clima
     agora = time.time()
-    
-    # Busca o clima a cada 20 minutos (1200 segundos)
+    # Busca clima a cada 20 minutos (1200 seg)
     if agora - ultima_busca_clima > 1200:
         buscar_clima()
         ultima_busca_clima = agora
-        
     return jsonify(dados)
+
+@app.route("/historico")
+def get_historico():
+    try:
+        conn = psycopg2.connect(DB_URL)
+        cursor = conn.cursor()
+        # Pega as últimas 15 leituras do banco
+        cursor.execute("SELECT solo, data_hora FROM leituras ORDER BY id DESC LIMIT 15")
+        linhas = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        linhas.reverse() # Inverte para o gráfico ficar na ordem cronológica (esq -> dir)
+
+        historico = {"labels": [], "data": []}
+        for linha in linhas:
+            historico["data"].append(linha[0])
+            historico["labels"].append(linha[1].strftime("%H:%M:%S"))
+
+        return jsonify(historico)
+    except Exception as e:
+        print("Erro ao buscar histórico:", e)
+        return jsonify({"labels": [], "data": []})
 
 @app.route("/cultura", methods=["POST"])
 def set_cultura():
@@ -204,6 +239,7 @@ def desligar():
 # START
 # =====================
 if __name__ == "__main__":
-    init_db()  # 🔥 Inicializa o banco antes de subir o servidor
+    init_db()
+    carregar_ultimo_estado() # Puxa a última memória salva antes de subir o app
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
