@@ -40,25 +40,6 @@
 
     .on { background: #22c55e; }
     .off { background: #ef4444; }
-
-    button {
-      padding: 10px;
-      margin: 5px;
-      border-radius: 8px;
-      border: none;
-      cursor: pointer;
-    }
-
-    .btn-on { background: #22c55e; }
-    .btn-off { background: #ef4444; }
-
-    select {
-      padding: 10px;
-      width: 100%;
-      border-radius: 8px;
-      background: #334155;
-      color: white;
-    }
   </style>
 </head>
 
@@ -84,8 +65,8 @@
 
     <br><br>
 
-    <button class="btn-on" onclick="ligar()">Ligar</button>
-    <button class="btn-off" onclick="desligar()">Desligar</button>
+    <button onclick="ligar()">Ligar</button>
+    <button onclick="desligar()">Desligar</button>
   </div>
 
   <div class="card">
@@ -111,10 +92,9 @@ function initChart() {
     data: {
       labels: [],
       datasets: [{
-        label: 'Umidade Solo (%)',
+        label: 'Umidade (%)',
         data: [],
-        borderWidth: 2,
-        tension: 0.3
+        borderWidth: 2
       }]
     }
   });
@@ -129,19 +109,20 @@ async function atualizar() {
     💧 Solo: ${d.solo}%<br>
     🌡️ Temp Sensor: ${d.temp}°C<br>
     🚿 Irrigação:
-    <span class="badge ${d.irrigacao === 'ON' ? 'on' : 'off'}">
+    <span class="${d.irrigacao === 'ON' ? 'on' : 'off'}">
       ${d.irrigacao}
     </span>
   `;
 
   document.getElementById("clima").innerHTML = `
-    🌡️ Temp Cidade: ${d.temp_cidade}°C<br>
-    🌧️ Chuva: ${d.chuva ? "Sim" : "Não"}
+    📍 ${d.cidade}<br>
+    🌡️ ${d.temp_cidade}°C<br>
+    🌧️ ${d.chuva ? "Chovendo" : "Sem chuva"}<br>
+    📌 ${d.lat}, ${d.lon}<br>
+    <img src="https://openweathermap.org/img/wn/${d.icone}@2x.png">
   `;
 
-  const time = new Date().toLocaleTimeString();
-
-  chart.data.labels.push(time);
+  chart.data.labels.push(new Date().toLocaleTimeString());
   chart.data.datasets[0].data.push(d.solo);
 
   if (chart.data.labels.length > 15) {
@@ -154,7 +135,6 @@ async function atualizar() {
 
 async function mudarCultura() {
   const cultura = document.getElementById("cultura").value;
-
   await fetch('/cultura', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
@@ -162,8 +142,8 @@ async function mudarCultura() {
   });
 }
 
-async function ligar() { await fetch('/ligar'); }
-async function desligar() { await fetch('/desligar'); }
+async function ligar(){ await fetch('/ligar'); }
+async function desligar(){ await fetch('/desligar'); }
 
 initChart();
 setInterval(atualizar, 3000);
