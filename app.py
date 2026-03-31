@@ -2,6 +2,7 @@ import os
 import ssl
 import json
 import requests
+import time  # 🔥 Novo import adicionado para controlar o tempo
 from flask import Flask, jsonify, request, render_template
 import paho.mqtt.client as mqtt
 
@@ -44,6 +45,8 @@ regras = {
     "soja": {"min": 35, "max": 65},
     "cafe": {"min": 45, "max": 75}
 }
+
+ultima_busca_clima = 0  # 🔥 Variável para guardar o horário da última requisição do clima
 
 # =====================
 # CLIMA (SEM THREAD)
@@ -154,7 +157,14 @@ def index():
 
 @app.route("/dados")
 def get_dados():
-    buscar_clima()  # 🔥 AQUI RESOLVE O PROBLEMA
+    global ultima_busca_clima
+    agora = time.time()
+    
+    # 🔥 Verifica se já se passaram 600 segundos (10 minutos) desde a última busca
+    if agora - ultima_busca_clima > 600:
+        buscar_clima()
+        ultima_busca_clima = agora
+        
     return jsonify(dados)
 
 @app.route("/cultura", methods=["POST"])
