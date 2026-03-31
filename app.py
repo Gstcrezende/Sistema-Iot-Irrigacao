@@ -6,6 +6,7 @@ import time
 import psycopg2
 from flask import Flask, jsonify, request, render_template
 import paho.mqtt.client as mqtt
+from datetime import timedelta
 
 app = Flask(__name__)
 
@@ -213,9 +214,13 @@ def get_historico():
         historico = {"labels": [], "data": []}
         for linha in linhas:
             historico["data"].append(linha[0])
-            historico["labels"].append(linha[1].strftime("%H:%M")) # Removi os segundos para o eixo X ficar mais limpo
+            
+            # 🔥 Pega o horário do banco (UTC) e subtrai 3 horas para o fuso do Brasil
+            hora_local = linha[1] - timedelta(hours=3)
+            historico["labels"].append(hora_local.strftime("%H:%M"))
 
         return jsonify(historico)
+        
     except Exception as e:
         print("Erro ao buscar histórico:", e)
         return jsonify({"labels": [], "data": []})
