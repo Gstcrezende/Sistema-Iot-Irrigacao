@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <title>AgroTech IoT</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+
+<body class="bg-gray-900 text-white">
+
+<div class="p-6">
+
+  <h1 class="text-2xl font-bold mb-4">🌱 AgroTech IoT</h1>
+
+  <div class="grid grid-cols-2 gap-4 mb-6">
+    <div class="bg-gray-800 p-4 rounded">
+      <h2>Umidade</h2>
+      <p id="umidade" class="text-3xl">--</p>
+    </div>
+
+    <div class="bg-gray-800 p-4 rounded">
+      <h2>Status</h2>
+      <p id="status" class="text-3xl text-red-400">OFF</p>
+    </div>
+  </div>
+
+  <canvas id="grafico"></canvas>
+
+</div>
+
+<script>
+let chart;
+
+async function carregarHistorico() {
+  const res = await fetch('/historico');
+  const data = await res.json();
+
+  const labels = data.map(d => d.timestamp).reverse();
+  const valores = data.map(d => d.umidade).reverse();
+
+  const ctx = document.getElementById('grafico');
+
+  chart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: 'Umidade',
+        data: valores
+      }]
+    }
+  });
+}
+
+async function atualizar() {
+  const res = await fetch('/dados');
+  const data = await res.json();
+
+  document.getElementById("umidade").innerText = data.umidade;
+  document.getElementById("status").innerText = data.irrigacao;
+
+  if (chart) {
+    chart.data.labels.push(new Date().toLocaleTimeString());
+    chart.data.datasets[0].data.push(data.umidade);
+
+    if (chart.data.labels.length > 20) {
+      chart.data.labels.shift();
+      chart.data.datasets[0].data.shift();
+    }
+
+    chart.update();
+  }
+}
+
+carregarHistorico().then(() => setInterval(atualizar, 3000));
+</script>
+
+</body>
+</html>
