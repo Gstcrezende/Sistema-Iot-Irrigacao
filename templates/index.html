@@ -185,9 +185,9 @@ async function atualizar() {
     `;
   }
 
-  // Verifica se já passaram 20 minutos (1.200.000 ms) para atualizar o gráfico com o tempo real
+  // Verifica se já passaram 10 minutos (1.200.000 ms) para atualizar o gráfico com o tempo real
   const agora = Date.now();
-  if (agora - ultimaAtualizacaoGrafico >= 1200000 || ultimaAtualizacaoGrafico === 0) {
+  if (agora - ultimaAtualizacaoGrafico >= 300000 || ultimaAtualizacaoGrafico === 0) {
     const time = new Date().toLocaleTimeString();
 
     chart.data.labels.push(time);
