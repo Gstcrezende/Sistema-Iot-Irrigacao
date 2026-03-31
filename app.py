@@ -1,9 +1,9 @@
+import os
 import ssl
 import json
 import requests
 from flask import Flask, jsonify, request, render_template
 import paho.mqtt.client as mqtt
-import os
 
 app = Flask(__name__)
 
@@ -19,7 +19,7 @@ TOPIC_DADOS = "/fazenda/dados"
 TOPIC_CONTROLE = "/fazenda/irrigacao"
 
 # =====================
-# API CLIMA (OpenWeather)
+# CLIMA
 # =====================
 API_KEY = "1563f0caa3ed84c078ab47087d40a962"
 CIDADE = "Ribeirao Preto,BR"
@@ -30,11 +30,15 @@ CIDADE = "Ribeirao Preto,BR"
 dados = {
     "solo": 0,
     "temp": 0,
+    "temp_cidade": 0,
     "chuva": False,
     "cultura": "milho",
     "irrigacao": "OFF"
 }
 
+# =====================
+# REGRAS POR CULTURA
+# =====================
 regras = {
     "milho": {"min": 40, "max": 70},
     "soja": {"min": 35, "max": 65},
@@ -44,21 +48,22 @@ regras = {
 # =====================
 # CLIMA REAL
 # =====================
-def verificar_chuva():
+def verificar_clima():
     try:
         url = f"https://api.openweathermap.org/data/2.5/weather?q={CIDADE}&appid={API_KEY}&units=metric"
         r = requests.get(url, timeout=5)
         data = r.json()
 
         clima = data["weather"][0]["main"].lower()
+        temp_cidade = data["main"]["temp"]
 
-        print("Clima atual:", clima)
+        chuva = clima in ["rain", "drizzle", "thunderstorm"]
 
-        return clima in ["rain", "drizzle", "thunderstorm"]
+        return chuva, temp_cidade
 
     except Exception as e:
         print("Erro clima:", e)
-        return False
+        return False, 0
 
 # =====================
 # LÓGICA INTELIGENTE
@@ -66,7 +71,6 @@ def verificar_chuva():
 def decidir_irrigacao(solo, temp, cultura, chuva):
     regra = regras[cultura]
 
-    # 🌧️ PRIORIDADE TOTAL
     if chuva:
         return "OFF"
 
@@ -96,8 +100,10 @@ def on_message(client, userdata, msg):
         dados["solo"] = data.get("solo", 0)
         dados["temp"] = data.get("temp", 0)
 
-        # 🌧️ consulta clima
-        dados["chuva"] = verificar_chuva()
+        chuva, temp_cidade = verificar_clima()
+
+        dados["chuva"] = chuva
+        dados["temp_cidade"] = temp_cidade
 
         estado = decidir_irrigacao(
             dados["solo"],
@@ -110,7 +116,7 @@ def on_message(client, userdata, msg):
 
         client.publish(TOPIC_CONTROLE, estado)
 
-        print("Dados atualizados:", dados)
+        print(dados)
 
     except Exception as e:
         print("Erro MQTT:", e)
@@ -157,7 +163,7 @@ def desligar():
     return {"ok": True}
 
 # =====================
-# START
+# START (RENDER)
 # =====================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
