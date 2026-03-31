@@ -160,8 +160,8 @@ def get_dados():
     global ultima_busca_clima
     agora = time.time()
     
-    # 🔥 Verifica se já se passaram 600 segundos (10 minutos) desde a última busca
-    if agora - ultima_busca_clima > 600:
+    
+    if agora - ultima_busca_clima > 1200:
         buscar_clima()
         ultima_busca_clima = agora
         
