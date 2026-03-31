@@ -1,13 +1,22 @@
+import ssl
 from flask import Flask, render_template, jsonify
 import paho.mqtt.client as mqtt
 import psycopg2
 import os
-import threading
 
 app = Flask(__name__)
 
 # =====================
-# BANCO DE DADOS
+# MQTT CONFIG
+# =====================
+MQTT_HOST = "671be66b88cf41909db655fee73234dd.s1.eu.hivemq.cloud"
+MQTT_PORT = 8883
+MQTT_USER = "iotuser"
+MQTT_PASS = "Iot12345"
+MQTT_TOPIC = "/fazenda/solo/umidade"
+
+# =====================
+# BANCO
 # =====================
 conn = psycopg2.connect(os.environ.get("DATABASE_URL"))
 cursor = conn.cursor()
@@ -22,18 +31,8 @@ CREATE TABLE IF NOT EXISTS sensores (
 """)
 conn.commit()
 
-# =====================
-# DADOS EM MEMÓRIA
-# =====================
-dados = {
-    "umidade": 0,
-    "irrigacao": "OFF"
-}
-dados_lock = threading.Lock()
+dados = {"umidade": 0, "irrigacao": "OFF"}
 
-# =====================
-# SALVAR NO BANCO
-# =====================
 def salvar_dados(umidade, irrigacao):
     cursor.execute(
         "INSERT INTO sensores (umidade, irrigacao) VALUES (%s, %s)",
@@ -42,29 +41,41 @@ def salvar_dados(umidade, irrigacao):
     conn.commit()
 
 # =====================
-# MQTT
+# MQTT CALLBACKS
 # =====================
+def on_connect(client, userdata, flags, rc):
+    print("Conectado ao MQTT:", rc)
+    client.subscribe(MQTT_TOPIC)
+
 def on_message(client, userdata, msg):
     global dados
 
-    if msg.topic == "/fazenda/solo/umidade":
-        umidade = float(msg.payload.decode())
-        irrigacao = "ON" if umidade < 30 else "OFF"
+    umidade = float(msg.payload.decode())
+    dados["umidade"] = umidade
 
-        with dados_lock:
-            dados["umidade"] = umidade
-            dados["irrigacao"] = irrigacao
+    if umidade < 30:
+        dados["irrigacao"] = "ON"
+    else:
+        dados["irrigacao"] = "OFF"
 
-        salvar_dados(umidade, irrigacao)
+    salvar_dados(umidade, dados["irrigacao"])
+    print("Recebido:", umidade)
 
-client = mqtt.Client(client_id=f"agrotech-{os.getpid()}")
-try:
-    client.connect("broker.hivemq.com", 1883)
-    client.subscribe("/fazenda/solo/umidade")
-    client.on_message = on_message
-    client.loop_start()
-except Exception as e:
-    print(f"MQTT connection failed: {e}")
+# =====================
+# MQTT START
+# =====================
+client = mqtt.Client()
+client.username_pw_set(MQTT_USER, MQTT_PASS)
+
+# 🔥 ESSENCIAL PRA HIVEMQ CLOUD
+client.tls_set(cert_reqs=ssl.CERT_NONE)
+client.tls_insecure_set(True)
+
+client.on_connect = on_connect
+client.on_message = on_message
+
+client.connect(MQTT_HOST, MQTT_PORT)
+client.loop_start()
 
 # =====================
 # ROTAS
@@ -74,28 +85,24 @@ def index():
     return render_template("index.html")
 
 @app.route("/dados")
-def get_dados():
-    with dados_lock:
-        snapshot = dict(dados)
-    return jsonify(snapshot)
+def dados_api():
+    return jsonify(dados)
 
 @app.route("/historico")
 def historico():
-    cursor.execute(
-        "SELECT id, umidade, irrigacao, timestamp FROM sensores ORDER BY timestamp DESC LIMIT 20"
-    )
+    cursor.execute("SELECT umidade, irrigacao, timestamp FROM sensores ORDER BY timestamp DESC LIMIT 20")
     rows = cursor.fetchall()
 
     return jsonify([
         {
-            "umidade": r[1],
-            "irrigacao": r[2],
-            "timestamp": r[3].strftime("%H:%M:%S")
+            "umidade": r[0],
+            "irrigacao": r[1],
+            "timestamp": r[2].strftime("%H:%M:%S")
         } for r in rows
     ])
 
 # =====================
-# START
+# START RENDER
 # =====================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
