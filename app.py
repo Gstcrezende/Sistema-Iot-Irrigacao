@@ -1,12 +1,13 @@
 import ssl
 import json
-from flask import Flask, jsonify, request
+import requests
+from flask import Flask, jsonify, request, render_template
 import paho.mqtt.client as mqtt
 
 app = Flask(__name__)
 
 # =====================
-# CONFIG MQTT (HIVEMQ)
+# CONFIG MQTT
 # =====================
 MQTT_HOST = "671be66b88cf41909db655fee73234dd.s1.eu.hivemq.cloud"
 MQTT_PORT = 8883
@@ -17,18 +18,22 @@ TOPIC_DADOS = "/fazenda/dados"
 TOPIC_CONTROLE = "/fazenda/irrigacao"
 
 # =====================
+# API CLIMA (OpenWeather)
+# =====================
+API_KEY = "1563f0caa3ed84c078ab47087d40a962"
+CIDADE = "Ribeirao Preto,BR"
+
+# =====================
 # ESTADO
 # =====================
 dados = {
     "solo": 0,
     "temp": 0,
+    "chuva": False,
     "cultura": "milho",
     "irrigacao": "OFF"
 }
 
-# =====================
-# REGRAS POR CULTURA
-# =====================
 regras = {
     "milho": {"min": 40, "max": 70},
     "soja": {"min": 35, "max": 65},
@@ -36,23 +41,42 @@ regras = {
 }
 
 # =====================
+# CLIMA REAL
+# =====================
+def verificar_chuva():
+    try:
+        url = f"https://api.openweathermap.org/data/2.5/weather?q={CIDADE}&appid={API_KEY}&units=metric"
+        r = requests.get(url, timeout=5)
+        data = r.json()
+
+        clima = data["weather"][0]["main"].lower()
+
+        print("Clima atual:", clima)
+
+        return clima in ["rain", "drizzle", "thunderstorm"]
+
+    except Exception as e:
+        print("Erro clima:", e)
+        return False
+
+# =====================
 # LÓGICA INTELIGENTE
 # =====================
-def decidir_irrigacao(solo, temp, cultura):
+def decidir_irrigacao(solo, temp, cultura, chuva):
     regra = regras[cultura]
 
-    # Solo seco
+    # 🌧️ PRIORIDADE TOTAL
+    if chuva:
+        return "OFF"
+
     if solo < regra["min"]:
         return "ON"
 
-    # Solo ok
     if regra["min"] <= solo <= regra["max"]:
-        # temperatura alta = precisa mais água
         if temp > 30:
             return "ON"
         return "OFF"
 
-    # Solo muito úmido
     return "OFF"
 
 # =====================
@@ -65,19 +89,30 @@ def on_connect(client, userdata, flags, rc):
 def on_message(client, userdata, msg):
     global dados
 
-    data = json.loads(msg.payload.decode())
+    try:
+        data = json.loads(msg.payload.decode())
 
-    dados["solo"] = data["solo"]
-    dados["temp"] = data["temp"]
+        dados["solo"] = data.get("solo", 0)
+        dados["temp"] = data.get("temp", 0)
 
-    cultura = dados["cultura"]
+        # 🌧️ consulta clima
+        dados["chuva"] = verificar_chuva()
 
-    estado = decidir_irrigacao(dados["solo"], dados["temp"], cultura)
-    dados["irrigacao"] = estado
+        estado = decidir_irrigacao(
+            dados["solo"],
+            dados["temp"],
+            dados["cultura"],
+            dados["chuva"]
+        )
 
-    client.publish(TOPIC_CONTROLE, estado)
+        dados["irrigacao"] = estado
 
-    print(dados)
+        client.publish(TOPIC_CONTROLE, estado)
+
+        print("Dados atualizados:", dados)
+
+    except Exception as e:
+        print("Erro MQTT:", e)
 
 # =====================
 # MQTT START
@@ -97,6 +132,10 @@ client.loop_start()
 # =====================
 # ROTAS
 # =====================
+@app.route("/")
+def index():
+    return render_template("index.html")
+
 @app.route("/dados")
 def get_dados():
     return jsonify(dados)
