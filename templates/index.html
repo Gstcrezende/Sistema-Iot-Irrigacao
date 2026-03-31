@@ -1,70 +1,123 @@
 <!DOCTYPE html>
-<html>
+<html lang="pt-br">
 <head>
+  <meta charset="UTF-8">
   <title>AgroTech IoT</title>
+
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
   <style>
     body {
-      font-family: Arial;
+      margin: 0;
+      font-family: Arial, sans-serif;
       background: #0f172a;
       color: white;
+    }
+
+    header {
+      background: #020617;
+      padding: 20px;
       text-align: center;
+      font-size: 24px;
+      font-weight: bold;
+    }
+
+    .container {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 20px;
+      padding: 20px;
     }
 
     .card {
       background: #1e293b;
       padding: 20px;
-      margin: 20px;
-      border-radius: 10px;
-      display: inline-block;
+      border-radius: 12px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.3);
     }
 
-    button {
+    .status {
+      font-size: 18px;
+      line-height: 1.8;
+    }
+
+    .badge {
+      padding: 5px 10px;
+      border-radius: 6px;
+      font-weight: bold;
+    }
+
+    .on { background: #22c55e; }
+    .off { background: #ef4444; }
+
+    select, button {
       padding: 10px;
-      margin: 5px;
+      margin-top: 10px;
+      border-radius: 8px;
       border: none;
-      border-radius: 5px;
-      background: #22c55e;
-      color: white;
-      cursor: pointer;
+      font-size: 14px;
     }
 
     select {
-      padding: 10px;
-      margin: 10px;
+      background: #334155;
+      color: white;
+      width: 100%;
+    }
+
+    button {
+      cursor: pointer;
+      margin-right: 5px;
+    }
+
+    .btn-on { background: #22c55e; }
+    .btn-off { background: #ef4444; }
+
+    canvas {
+      background: white;
+      border-radius: 10px;
     }
   </style>
 </head>
 
 <body>
 
-<h1>🌱 AgroTech IoT Dashboard</h1>
+<header>🌱 AgroTech IoT Dashboard</header>
 
-<div class="card">
-  <h3>Status</h3>
-  <p id="status"></p>
-</div>
+<div class="container">
 
-<div class="card">
-  <h3>Controle</h3>
-  <select onchange="mudarCultura(this.value)">
-    <option value="milho">Milho</option>
-    <option value="soja">Soja</option>
-    <option value="cafe">Café</option>
-  </select><br>
+  <!-- STATUS -->
+  <div class="card">
+    <h3>Status do Sistema</h3>
+    <div class="status" id="status"></div>
+  </div>
 
-  <button onclick="ligar()">Ligar</button>
-  <button onclick="desligar()">Desligar</button>
-</div>
+  <!-- CONTROLE -->
+  <div class="card">
+    <h3>Controle</h3>
 
-<div class="card">
-  <h3>Gráfico Solo</h3>
-  <canvas id="grafico"></canvas>
+    <label>Cultura:</label>
+    <select id="cultura" onchange="mudarCultura()">
+      <option value="milho">🌽 Milho</option>
+      <option value="soja">🌱 Soja</option>
+      <option value="cafe">☕ Café</option>
+    </select>
+
+    <br><br>
+
+    <button class="btn-on" onclick="ligar()">Ligar Irrigação</button>
+    <button class="btn-off" onclick="desligar()">Desligar</button>
+  </div>
+
+  <!-- GRÁFICO -->
+  <div class="card">
+    <h3>Umidade do Solo (%)</h3>
+    <canvas id="grafico"></canvas>
+  </div>
+
 </div>
 
 <script>
 let chart;
-let dataPoints = [];
 
 function initChart() {
   const ctx = document.getElementById("grafico").getContext("2d");
@@ -74,10 +127,20 @@ function initChart() {
     data: {
       labels: [],
       datasets: [{
-        label: "Umidade do Solo (%)",
+        label: "Umidade do Solo",
         data: [],
-        borderWidth: 2
+        borderWidth: 2,
+        tension: 0.3
       }]
+    },
+    options: {
+      responsive: true,
+      scales: {
+        y: {
+          beginAtZero: true,
+          max: 100
+        }
+      }
     }
   });
 }
@@ -86,15 +149,25 @@ async function atualizar() {
   const res = await fetch('/dados');
   const d = await res.json();
 
-  document.getElementById("status").innerText =
-    `Solo: ${d.solo}% | Temp: ${d.temp}°C | Chuva: ${d.chuva} | Irrigação: ${d.irrigacao}`;
+  const status = `
+    🌱 Cultura: <b>${d.cultura}</b><br>
+    🌡️ Temp: ${d.temp}°C<br>
+    💧 Solo: ${d.solo}%<br>
+    🌧️ Chuva: ${d.chuva ? "Sim" : "Não"}<br>
+    🚿 Irrigação: 
+    <span class="badge ${d.irrigacao === 'ON' ? 'on' : 'off'}">
+      ${d.irrigacao}
+    </span>
+  `;
+
+  document.getElementById("status").innerHTML = status;
 
   const time = new Date().toLocaleTimeString();
 
   chart.data.labels.push(time);
   chart.data.datasets[0].data.push(d.solo);
 
-  if (chart.data.labels.length > 10) {
+  if (chart.data.labels.length > 15) {
     chart.data.labels.shift();
     chart.data.datasets[0].data.shift();
   }
@@ -102,16 +175,23 @@ async function atualizar() {
   chart.update();
 }
 
-async function mudarCultura(c) {
+async function mudarCultura() {
+  const cultura = document.getElementById("cultura").value;
+
   await fetch('/cultura', {
     method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({cultura: c})
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ cultura })
   });
 }
 
-async function ligar() { await fetch('/ligar'); }
-async function desligar() { await fetch('/desligar'); }
+async function ligar() {
+  await fetch('/ligar');
+}
+
+async function desligar() {
+  await fetch('/desligar');
+}
 
 initChart();
 setInterval(atualizar, 3000);
