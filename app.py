@@ -191,7 +191,7 @@ def index():
 def get_dados():
     global ultima_busca_clima
     agora = time.time()
-    # Busca clima a cada 20 minutos (1200 seg)
+    # 🔥 Busca clima a cada 5 minutos (300 seg)
     if agora - ultima_busca_clima > 300:
         buscar_clima()
         ultima_busca_clima = agora
@@ -202,18 +202,18 @@ def get_historico():
     try:
         conn = psycopg2.connect(DB_URL)
         cursor = conn.cursor()
-        # Pega as últimas 15 leituras do banco
-        cursor.execute("SELECT solo, data_hora FROM leituras ORDER BY id DESC LIMIT 15")
+        # 🔥 Pega as últimas 60 leituras do banco (5 horas de histórico a cada 5 min)
+        cursor.execute("SELECT solo, data_hora FROM leituras ORDER BY id DESC LIMIT 60")
         linhas = cursor.fetchall()
         cursor.close()
         conn.close()
 
-        linhas.reverse() # Inverte para o gráfico ficar na ordem cronológica (esq -> dir)
+        linhas.reverse() 
 
         historico = {"labels": [], "data": []}
         for linha in linhas:
             historico["data"].append(linha[0])
-            historico["labels"].append(linha[1].strftime("%H:%M:%S"))
+            historico["labels"].append(linha[1].strftime("%H:%M")) # Removi os segundos para o eixo X ficar mais limpo
 
         return jsonify(historico)
     except Exception as e:
@@ -240,6 +240,6 @@ def desligar():
 # =====================
 if __name__ == "__main__":
     init_db()
-    carregar_ultimo_estado() # Puxa a última memória salva antes de subir o app
+    carregar_ultimo_estado()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
