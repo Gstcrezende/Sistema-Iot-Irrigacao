@@ -2,14 +2,15 @@ import os
 import ssl
 import json
 import requests
-import time  # 🔥 Novo import adicionado para controlar o tempo
+import time
+import psycopg2
 from flask import Flask, jsonify, request, render_template
 import paho.mqtt.client as mqtt
 
 app = Flask(__name__)
 
 # =====================
-# CONFIG
+# CONFIGURAÇÕES MQTT & API
 # =====================
 MQTT_HOST = "671be66b88cf41909db655fee73234dd.s1.eu.hivemq.cloud"
 MQTT_PORT = 8883
@@ -20,12 +21,52 @@ TOPIC_DADOS = "/fazenda/dados"
 TOPIC_CONTROLE = "/fazenda/irrigacao"
 
 API_KEY = "1563f0caa3ed84c078ab47087d40a962"
-
-# 🔥 TROQUEI PRA FRANCA
 CIDADE = "Franca,BR"
 
 # =====================
-# ESTADO
+# BANCO DE DADOS (RENDER)
+# =====================
+# Usando a URL Interna conforme seu print
+DB_URL = "postgresql://database_42u1_user:izGbmDSbHtKdcXlbC5X2pPTBGlfEmoPK@dpg-d75tu5haae7s73cvc45g-a/database_42u1"
+
+def init_db():
+    try:
+        conn = psycopg2.connect(DB_URL)
+        cursor = conn.cursor()
+        # Cria a tabela de histórico se ela não existir
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS leituras (
+                id SERIAL PRIMARY KEY,
+                solo FLOAT,
+                temp FLOAT,
+                irrigacao VARCHAR(10),
+                data_hora TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        conn.commit()
+        cursor.close()
+        conn.close()
+        print("✅ Banco de dados PostgreSQL conectado e tabela verificada!")
+    except Exception as e:
+        print("🔥 ERRO NO BANCO DE DADOS:", e)
+
+def salvar_no_banco(solo, temp, irrigacao):
+    try:
+        conn = psycopg2.connect(DB_URL)
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO leituras (solo, temp, irrigacao) VALUES (%s, %s, %s)",
+            (solo, temp, irrigacao)
+        )
+        conn.commit()
+        cursor.close()
+        conn.close()
+        print("💾 Dado salvo no PostgreSQL com sucesso!")
+    except Exception as e:
+        print("🔥 ERRO AO SALVAR NO BANCO:", e)
+
+# =====================
+# ESTADO DA APLICAÇÃO
 # =====================
 dados = {
     "solo": 0,
@@ -46,67 +87,40 @@ regras = {
     "cafe": {"min": 45, "max": 75}
 }
 
-ultima_busca_clima = 0  # 🔥 Variável para guardar o horário da última requisição do clima
+ultima_busca_clima = 0
+ultima_gravacao_db = 0  # Controle para não floodar o banco de dados
 
 # =====================
-# CLIMA (SEM THREAD)
+# CLIMA E IRRIGAÇÃO
 # =====================
 def buscar_clima():
+    global dados
     try:
         url = "https://api.openweathermap.org/data/2.5/weather"
-
-        params = {
-            "q": CIDADE,
-            "appid": API_KEY,
-            "units": "metric",
-            "lang": "pt_br"
-        }
-
-        print("\n🔎 Buscando clima...")
-        print("Cidade:", CIDADE)
-
+        params = {"q": CIDADE, "appid": API_KEY, "units": "metric", "lang": "pt_br"}
         r = requests.get(url, params=params, timeout=5)
-
-        print("Status:", r.status_code)
-        print("Resposta:", r.text)
-
         data = r.json()
 
-        if r.status_code != 200:
-            print("❌ ERRO API:", data)
-            return
-
-        dados["temp_cidade"] = data["main"]["temp"]
-        dados["cidade"] = data["name"]
-        dados["icone"] = data["weather"][0]["icon"]
-        dados["lat"] = data["coord"]["lat"]
-        dados["lon"] = data["coord"]["lon"]
-
-        clima = data["weather"][0]["main"].lower()
-        dados["chuva"] = clima in ["rain", "drizzle", "thunderstorm"]
-
-        print("✅ Clima atualizado!")
-
+        if r.status_code == 200:
+            dados["temp_cidade"] = data["main"]["temp"]
+            dados["cidade"] = data["name"]
+            dados["icone"] = data["weather"][0]["icon"]
+            clima = data["weather"][0]["main"].lower()
+            dados["chuva"] = clima in ["rain", "drizzle", "thunderstorm"]
+            print("✅ Clima atualizado!")
     except Exception as e:
         print("🔥 ERRO CLIMA:", e)
 
-# =====================
-# IRRIGAÇÃO
-# =====================
 def decidir_irrigacao():
     regra = regras[dados["cultura"]]
-
     if dados["chuva"]:
         return "OFF"
-
     if dados["solo"] < regra["min"]:
         return "ON"
-
     if regra["min"] <= dados["solo"] <= regra["max"]:
         if dados["temp"] > 30:
             return "ON"
         return "OFF"
-
     return "OFF"
 
 # =====================
@@ -117,7 +131,7 @@ def on_connect(client, userdata, flags, rc):
     client.subscribe(TOPIC_DADOS)
 
 def on_message(client, userdata, msg):
-    global dados
+    global dados, ultima_gravacao_db
 
     try:
         payload = json.loads(msg.payload.decode())
@@ -130,15 +144,19 @@ def on_message(client, userdata, msg):
 
         client.publish(TOPIC_CONTROLE, estado)
 
+        # 🔥 Salva no banco de dados a cada 5 minutos (300 segundos)
+        agora = time.time()
+        if agora - ultima_gravacao_db > 300:
+            salvar_no_banco(dados["solo"], dados["temp"], estado)
+            ultima_gravacao_db = agora
+
     except Exception as e:
         print("Erro MQTT:", e)
 
 client = mqtt.Client()
 client.username_pw_set(MQTT_USER, MQTT_PASS)
-
 client.tls_set(cert_reqs=ssl.CERT_NONE)
 client.tls_insecure_set(True)
-
 client.on_connect = on_connect
 client.on_message = on_message
 
@@ -160,7 +178,7 @@ def get_dados():
     global ultima_busca_clima
     agora = time.time()
     
-    
+    # Busca o clima a cada 20 minutos (1200 segundos)
     if agora - ultima_busca_clima > 1200:
         buscar_clima()
         ultima_busca_clima = agora
@@ -186,5 +204,6 @@ def desligar():
 # START
 # =====================
 if __name__ == "__main__":
+    init_db()  # 🔥 Inicializa o banco antes de subir o servidor
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
