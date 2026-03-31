@@ -1,65 +1,83 @@
 import ssl
-from flask import Flask, render_template, jsonify
+import json
+from flask import Flask, jsonify, request
 import paho.mqtt.client as mqtt
-import psycopg2
-import os
 
 app = Flask(__name__)
 
 # =====================
-# MQTT CONFIG
+# CONFIG MQTT (HIVEMQ)
 # =====================
 MQTT_HOST = "671be66b88cf41909db655fee73234dd.s1.eu.hivemq.cloud"
 MQTT_PORT = 8883
 MQTT_USER = "iotuser"
 MQTT_PASS = "Iot12345"
-MQTT_TOPIC = "/fazenda/solo/umidade"
+
+TOPIC_DADOS = "/fazenda/dados"
+TOPIC_CONTROLE = "/fazenda/irrigacao"
 
 # =====================
-# BANCO
+# ESTADO
 # =====================
-conn = psycopg2.connect(os.environ.get("DATABASE_URL"))
-cursor = conn.cursor()
-
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS sensores (
-    id SERIAL PRIMARY KEY,
-    umidade FLOAT,
-    irrigacao VARCHAR(10),
-    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-""")
-conn.commit()
-
-dados = {"umidade": 0, "irrigacao": "OFF"}
-
-def salvar_dados(umidade, irrigacao):
-    cursor.execute(
-        "INSERT INTO sensores (umidade, irrigacao) VALUES (%s, %s)",
-        (umidade, irrigacao)
-    )
-    conn.commit()
+dados = {
+    "solo": 0,
+    "temp": 0,
+    "cultura": "milho",
+    "irrigacao": "OFF"
+}
 
 # =====================
-# MQTT CALLBACKS
+# REGRAS POR CULTURA
+# =====================
+regras = {
+    "milho": {"min": 40, "max": 70},
+    "soja": {"min": 35, "max": 65},
+    "cafe": {"min": 45, "max": 75}
+}
+
+# =====================
+# LÓGICA INTELIGENTE
+# =====================
+def decidir_irrigacao(solo, temp, cultura):
+    regra = regras[cultura]
+
+    # Solo seco
+    if solo < regra["min"]:
+        return "ON"
+
+    # Solo ok
+    if regra["min"] <= solo <= regra["max"]:
+        # temperatura alta = precisa mais água
+        if temp > 30:
+            return "ON"
+        return "OFF"
+
+    # Solo muito úmido
+    return "OFF"
+
+# =====================
+# MQTT CALLBACK
 # =====================
 def on_connect(client, userdata, flags, rc):
-    print("Conectado ao MQTT:", rc)
-    client.subscribe(MQTT_TOPIC)
+    print("MQTT conectado:", rc)
+    client.subscribe(TOPIC_DADOS)
 
 def on_message(client, userdata, msg):
     global dados
 
-    umidade = float(msg.payload.decode())
-    dados["umidade"] = umidade
+    data = json.loads(msg.payload.decode())
 
-    if umidade < 30:
-        dados["irrigacao"] = "ON"
-    else:
-        dados["irrigacao"] = "OFF"
+    dados["solo"] = data["solo"]
+    dados["temp"] = data["temp"]
 
-    salvar_dados(umidade, dados["irrigacao"])
-    print("Recebido:", umidade)
+    cultura = dados["cultura"]
+
+    estado = decidir_irrigacao(dados["solo"], dados["temp"], cultura)
+    dados["irrigacao"] = estado
+
+    client.publish(TOPIC_CONTROLE, estado)
+
+    print(dados)
 
 # =====================
 # MQTT START
@@ -67,7 +85,6 @@ def on_message(client, userdata, msg):
 client = mqtt.Client()
 client.username_pw_set(MQTT_USER, MQTT_PASS)
 
-# 🔥 ESSENCIAL PRA HIVEMQ CLOUD
 client.tls_set(cert_reqs=ssl.CERT_NONE)
 client.tls_insecure_set(True)
 
@@ -80,30 +97,27 @@ client.loop_start()
 # =====================
 # ROTAS
 # =====================
-@app.route("/")
-def index():
-    return render_template("index.html")
-
 @app.route("/dados")
-def dados_api():
+def get_dados():
     return jsonify(dados)
 
-@app.route("/historico")
-def historico():
-    cursor.execute("SELECT umidade, irrigacao, timestamp FROM sensores ORDER BY timestamp DESC LIMIT 20")
-    rows = cursor.fetchall()
+@app.route("/cultura", methods=["POST"])
+def set_cultura():
+    dados["cultura"] = request.json["cultura"]
+    return {"ok": True}
 
-    return jsonify([
-        {
-            "umidade": r[0],
-            "irrigacao": r[1],
-            "timestamp": r[2].strftime("%H:%M:%S")
-        } for r in rows
-    ])
+@app.route("/ligar")
+def ligar():
+    client.publish(TOPIC_CONTROLE, "ON")
+    return {"ok": True}
+
+@app.route("/desligar")
+def desligar():
+    client.publish(TOPIC_CONTROLE, "OFF")
+    return {"ok": True}
 
 # =====================
-# START RENDER
+# START
 # =====================
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=5000)
