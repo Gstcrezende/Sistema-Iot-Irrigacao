@@ -70,6 +70,15 @@
     img {
       margin-top: 10px;
     }
+
+    .legenda-grafico {
+      text-align: center;
+      font-size: 14px;
+      margin-bottom: 10px;
+      color: #94a3b8;
+    }
+    .ponto-azul { color: #3b82f6; font-weight: bold; }
+    .ponto-verde { color: #22c55e; font-weight: bold; }
   </style>
 </head>
 
@@ -96,7 +105,7 @@
   </div>
 
   <div class="card">
-    <h3>Clima da Cidade</h3>
+    <h3>Clima e Previsão (Inteligência)</h3>
     <div id="clima">Buscando clima...</div>
   </div>
 </div>
@@ -104,6 +113,10 @@
 <div class="chart-container">
   <div class="card">
     <h3>Gráfico Histórico (Últimas 5 horas) - Solo (%)</h3>
+    <div class="legenda-grafico">
+      <span class="ponto-azul">●</span> Bomba Desligada &nbsp;&nbsp;&nbsp; 
+      <span class="ponto-verde">●</span> Bomba Ligada (Irrigando)
+    </div>
     <canvas id="grafico" height="60"></canvas>
   </div>
 </div>
@@ -111,6 +124,15 @@
 <script>
 let chart;
 let ultimaAtualizacaoGrafico = 0; 
+
+// 🔥 Funções auxiliares para definir as cores e tamanhos dos pontos dinamicamente
+function getCorPonto(status) {
+  return status === 'ON' ? '#22c55e' : '#3b82f6'; // Verde se ligado, Azul se desligado
+}
+
+function getTamanhoPonto(status) {
+  return status === 'ON' ? 6 : 2; // Ponto grande se ligado, pequeno se desligado
+}
 
 function initChart() {
   const ctx = document.getElementById("grafico");
@@ -127,8 +149,11 @@ function initChart() {
         borderWidth: 2,
         tension: 0.3,
         fill: true,
-        pointRadius: 2, // 🔥 Deixa os pontos menores para suportar 60 dados sem poluir
-        pointHoverRadius: 5
+        // 🔥 Agora as cores e tamanhos são Arrays que serão preenchidos individualmente
+        pointBackgroundColor: [], 
+        pointBorderColor: [],
+        pointRadius: [], 
+        pointHoverRadius: 8
       }]
     },
     options: {
@@ -150,8 +175,16 @@ async function carregarHistorico() {
     if (h.labels.length > 0) {
       chart.data.labels = h.labels;
       chart.data.datasets[0].data = h.data;
+
+      // 🔥 Mapeia o histórico do banco para transformar "ON/OFF" em cores e tamanhos
+      const cores = h.status.map(s => getCorPonto(s));
+      const tamanhos = h.status.map(s => getTamanhoPonto(s));
+
+      chart.data.datasets[0].pointBackgroundColor = cores;
+      chart.data.datasets[0].pointBorderColor = cores;
+      chart.data.datasets[0].pointRadius = tamanhos;
+
       chart.update();
-      
       ultimaAtualizacaoGrafico = Date.now(); 
     }
   } catch (erro) {
@@ -177,15 +210,17 @@ async function atualizar() {
   `;
 
   if (d.cidade !== "-") {
+    // 🔥 Tela de clima atualizada com a previsão preditiva
     document.getElementById("clima").innerHTML = `
       📍 ${d.cidade}<br>
       🌡️ ${tempCidade}°C<br>
-      🌧️ ${d.chuva ? "Chovendo" : "Sem chuva"}<br>
-      <img src="https://openweathermap.org/img/wn/${d.icone}@2x.png">
+      🌧️ Agora: <b>${d.chuva ? "Chovendo" : "Sem chuva"}</b><br>
+      🔮 Previsão (12h): <b>${d.previsao_chuva ? "Chuva ☔" : "Limpo ☀️"} (${d.prob_chuva}%)</b><br>
+      <img src="https://openweathermap.org/img/wn/${d.icone}@2x.png" style="margin-top:-10px;">
     `;
   }
 
-  // 🔥 Verifica se já passaram 5 minutos (300.000 ms) para atualizar o gráfico localmente
+  // Verifica se já passaram 5 minutos para atualizar o gráfico localmente
   const agora = Date.now();
   if (agora - ultimaAtualizacaoGrafico >= 300000 || ultimaAtualizacaoGrafico === 0) {
     const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -193,10 +228,22 @@ async function atualizar() {
     chart.data.labels.push(time);
     chart.data.datasets[0].data.push(d.solo);
 
-    // 🔥 Limite subiu para 60 pontos (5 horas de gráfico)
+    // 🔥 Adiciona a cor e tamanho específicos baseados no status da bomba neste exato momento
+    const cor = getCorPonto(d.irrigacao);
+    const tamanho = getTamanhoPonto(d.irrigacao);
+
+    chart.data.datasets[0].pointBackgroundColor.push(cor);
+    chart.data.datasets[0].pointBorderColor.push(cor);
+    chart.data.datasets[0].pointRadius.push(tamanho);
+
+    // Limite de 60 pontos
     if (chart.data.labels.length > 60) {
       chart.data.labels.shift();
       chart.data.datasets[0].data.shift();
+      // 🔥 Se removermos o primeiro dado, precisamos remover a primeira cor e tamanho também
+      chart.data.datasets[0].pointBackgroundColor.shift();
+      chart.data.datasets[0].pointBorderColor.shift();
+      chart.data.datasets[0].pointRadius.shift();
     }
 
     chart.update();
@@ -220,7 +267,7 @@ async function desligar() { await fetch('/desligar'); }
 initChart();
 carregarHistorico(); 
 atualizar(); 
-setInterval(atualizar, 3000); // Mantém os textos rápidos (a cada 3s)
+setInterval(atualizar, 3000);
 </script>
 
 </body>
