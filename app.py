@@ -54,6 +54,11 @@ def verificar_clima():
         r = requests.get(url, timeout=5)
         data = r.json()
 
+        print("Resposta API:", data)
+
+        if "main" not in data:
+            return False, 0
+
         clima = data["weather"][0]["main"].lower()
         temp_cidade = data["main"]["temp"]
 
@@ -64,7 +69,6 @@ def verificar_clima():
     except Exception as e:
         print("Erro clima:", e)
         return False, 0
-
 # =====================
 # LÓGICA INTELIGENTE
 # =====================
