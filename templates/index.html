@@ -32,7 +32,6 @@
       border-radius: 12px;
     }
 
-    /* 🔥 Nova classe para alinhar o gráfico embaixo */
     .chart-container {
       padding: 0 20px 20px 20px;
     }
@@ -81,7 +80,7 @@
 <div class="grid">
   <div class="card">
     <h3>Status</h3>
-    <div id="status"></div>
+    <div id="status">Carregando dados...</div>
   </div>
 
   <div class="card">
@@ -98,7 +97,7 @@
 
   <div class="card">
     <h3>Clima da Cidade</h3>
-    <div id="clima"></div>
+    <div id="clima">Buscando clima...</div>
   </div>
 </div>
 
@@ -111,7 +110,7 @@
 
 <script>
 let chart;
-let ultimaAtualizacaoGrafico = 0; // Controle de tempo para o gráfico
+let ultimaAtualizacaoGrafico = 0; 
 
 function initChart() {
   const ctx = document.getElementById("grafico");
@@ -133,12 +132,31 @@ function initChart() {
     options: {
       scales: {
         y: {
-          min: 0, // 🔥 Garante que o eixo Y nunca tenha números negativos
-          max: 100 // Opcional: Garante que o limite seja sempre 100%
+          min: 0, 
+          max: 100 
         }
       }
     }
   });
+}
+
+// 🔥 Nova função: Puxa o histórico do banco de dados na hora que abre o site
+async function carregarHistorico() {
+  try {
+    const res = await fetch('/historico');
+    const h = await res.json();
+    
+    if (h.labels.length > 0) {
+      chart.data.labels = h.labels;
+      chart.data.datasets[0].data = h.data;
+      chart.update();
+      
+      // Trava o tempo do gráfico para ele não adicionar o primeiro ponto da memória em duplicidade
+      ultimaAtualizacaoGrafico = Date.now(); 
+    }
+  } catch (erro) {
+    console.log("Sem histórico ou erro ao carregar.");
+  }
 }
 
 async function atualizar() {
@@ -147,7 +165,7 @@ async function atualizar() {
 
   const tempCidade = Math.round(d.temp_cidade);
 
-  // Atualiza os textos da tela em tempo real (a cada 3s)
+  // Atualiza os textos da tela em tempo real
   document.getElementById("status").innerHTML = `
     🌱 Cultura: ${d.cultura.charAt(0).toUpperCase() + d.cultura.slice(1)}<br>
     💧 Solo: ${Math.round(d.solo)}%<br>
@@ -158,14 +176,16 @@ async function atualizar() {
     </span>
   `;
 
-  document.getElementById("clima").innerHTML = `
-    📍 ${d.cidade}<br>
-    🌡️ ${tempCidade}°C<br>
-    🌧️ ${d.chuva ? "Chovendo" : "Sem chuva"}<br>
-    <img src="https://openweathermap.org/img/wn/${d.icone}@2x.png">
-  `;
+  if (d.cidade !== "-") {
+    document.getElementById("clima").innerHTML = `
+      📍 ${d.cidade}<br>
+      🌡️ ${tempCidade}°C<br>
+      🌧️ ${d.chuva ? "Chovendo" : "Sem chuva"}<br>
+      <img src="https://openweathermap.org/img/wn/${d.icone}@2x.png">
+    `;
+  }
 
-  // 🔥 Verifica se já passaram 20 minutos (1.200.000 milissegundos) para atualizar o gráfico
+  // Verifica se já passaram 20 minutos (1.200.000 ms) para atualizar o gráfico com o tempo real
   const agora = Date.now();
   if (agora - ultimaAtualizacaoGrafico >= 1200000 || ultimaAtualizacaoGrafico === 0) {
     const time = new Date().toLocaleTimeString();
@@ -195,10 +215,11 @@ async function mudarCultura() {
 async function ligar() { await fetch('/ligar'); }
 async function desligar() { await fetch('/desligar'); }
 
+// --- Ordem de Inicialização ---
 initChart();
-
-// Busca os dados em tempo real a cada 3 segundos (mas o gráfico agora tem trava interna)
-setInterval(atualizar, 3000);
+carregarHistorico(); 
+atualizar(); // Puxa os dados dos cards imediatamente para não esperar 3 seg
+setInterval(atualizar, 3000); // Continua puxando os cards a cada 3 seg
 </script>
 
 </body>
