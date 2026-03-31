@@ -10,7 +10,7 @@ import paho.mqtt.client as mqtt
 app = Flask(__name__)
 
 # =====================
-# CONFIGURAÇÕES (Use Variáveis de Ambiente no Render se possível)
+# CONFIGURAÇÕES
 # =====================
 MQTT_HOST = "671be66b88cf41909db655fee73234dd.s1.eu.hivemq.cloud"
 MQTT_PORT = 8883
@@ -21,7 +21,7 @@ TOPIC_DADOS = "/fazenda/dados"
 TOPIC_CONTROLE = "/fazenda/irrigacao"
 
 API_KEY = "1563f0caa3ed84c078ab47087d40a962"
-CIDADE = "Ribeirao Preto,BR"
+CIDADE = "RibeiraoPreto,BR"
 
 # =====================
 # ESTADO GLOBAL
@@ -32,7 +32,11 @@ dados = {
     "temp_cidade": 0,
     "chuva": False,
     "cultura": "milho",
-    "irrigacao": "OFF"
+    "irrigacao": "OFF",
+    "cidade": "-",
+    "icone": "",
+    "lat": 0,
+    "lon": 0
 }
 
 regras = {
@@ -42,46 +46,69 @@ regras = {
 }
 
 # =====================
-# LÓGICA DE CLIMA (Background)
+# CLIMA (COM DEBUG COMPLETO)
 # =====================
 def buscar_clima_api():
-    """Faz a requisição para a OpenWeather de forma segura."""
     try:
         url = "https://api.openweathermap.org/data/2.5/weather"
+
         params = {
             "q": CIDADE,
             "appid": API_KEY,
             "units": "metric",
             "lang": "pt_br"
         }
-        # O 'params' cuida dos espaços em branco no nome da cidade automaticamente
+
+        print("\n🔎 Buscando clima...")
+        print("Cidade enviada:", CIDADE)
+
         response = requests.get(url, params=params, timeout=10)
+
+        print("Status HTTP:", response.status_code)
+        print("Resposta RAW:", response.text)
+
         data = response.json()
 
-        if response.status_code == 200:
-            temp = data["main"]["temp"]
-            # Verifica se há chuva nos dados meteorológicos
-            clima_main = data["weather"][0]["main"].lower()
-            chuva = any(x in clima_main for x in ["rain", "drizzle", "thunderstorm"])
-            return True, chuva, temp
-        else:
-            print(f"Erro API OpenWeather: {data.get('message')}")
-            return False, False, 0
+        if response.status_code != 200:
+            print("❌ Erro API:", data.get("message"))
+            return False, False, 0, "-", "", 0, 0
+
+        temp = data["main"]["temp"]
+        clima_main = data["weather"][0]["main"].lower()
+        descricao = data["weather"][0]["description"]
+        icon = data["weather"][0]["icon"]
+
+        cidade_nome = data["name"]
+        lat = data["coord"]["lat"]
+        lon = data["coord"]["lon"]
+
+        chuva = any(x in clima_main for x in ["rain", "drizzle", "thunderstorm"])
+
+        print(f"✅ Cidade: {cidade_nome}")
+        print(f"🌡️ Temp: {temp}")
+        print(f"🌧️ Chuva: {chuva}")
+        print(f"📍 Lat/Lon: {lat}, {lon}")
+        print(f"🖼️ Ícone: {icon}")
+
+        return True, chuva, temp, cidade_nome, icon, lat, lon
+
     except Exception as e:
-        print(f"Erro ao conectar na API: {e}")
-        return False, False, 0
+        print(f"🔥 ERRO CRÍTICO clima: {e}")
+        return False, False, 0, "-", "", 0, 0
 
 def tarefa_atualizar_clima():
-    """Thread que atualiza o clima a cada 10 minutos."""
     global dados
     while True:
-        sucesso, chuva, temp_cidade = buscar_clima_api()
+        sucesso, chuva, temp_cidade, cidade_nome, icon, lat, lon = buscar_clima_api()
+
         if sucesso:
             dados["chuva"] = chuva
             dados["temp_cidade"] = temp_cidade
-            print(f"Clima atualizado: {temp_cidade}°C, Chuva: {chuva}")
-        
-        # Espera 10 minutos (600s) para não estourar o limite da conta gratuita
+            dados["cidade"] = cidade_nome
+            dados["icone"] = icon
+            dados["lat"] = lat
+            dados["lon"] = lon
+
         time.sleep(600)
 
 # =====================
@@ -97,7 +124,6 @@ def decidir_irrigacao(solo, temp_sensor, cultura, esta_chovendo):
         return "ON"
 
     if regra["min"] <= solo <= regra["max"]:
-        # Se estiver muito quente no sensor local, reforça a irrigação
         if temp_sensor > 30:
             return "ON"
         return "OFF"
@@ -109,21 +135,19 @@ def decidir_irrigacao(solo, temp_sensor, cultura, esta_chovendo):
 # =====================
 def on_connect(client, userdata, flags, rc):
     if rc == 0:
-        print("Conectado ao HiveMQ com sucesso!")
+        print("Conectado ao HiveMQ!")
         client.subscribe(TOPIC_DADOS)
     else:
-        print(f"Falha na conexão MQTT. Código: {rc}")
+        print("Erro MQTT:", rc)
 
 def on_message(client, userdata, msg):
     global dados
     try:
         payload = json.loads(msg.payload.decode())
-        
-        # Atualiza dados do sensor (ESP32)
+
         dados["solo"] = payload.get("solo", 0)
         dados["temp"] = payload.get("temp", 0)
 
-        # Decide a irrigação com base no estado ATUAL (que a thread de clima mantém)
         estado = decidir_irrigacao(
             dados["solo"],
             dados["temp"],
@@ -133,15 +157,16 @@ def on_message(client, userdata, msg):
 
         dados["irrigacao"] = estado
         client.publish(TOPIC_CONTROLE, estado)
-        
+
     except Exception as e:
-        print(f"Erro ao processar mensagem MQTT: {e}")
+        print("Erro MQTT:", e)
 
 # =====================
 # INICIALIZAÇÃO MQTT
 # =====================
 client = mqtt.Client()
 client.username_pw_set(MQTT_USER, MQTT_PASS)
+
 client.tls_set(cert_reqs=ssl.CERT_NONE)
 client.tls_insecure_set(True)
 
@@ -149,7 +174,7 @@ client.on_connect = on_connect
 client.on_message = on_message
 
 # =====================
-# ROTAS FLASK
+# ROTAS
 # =====================
 @app.route("/")
 def index():
@@ -161,11 +186,11 @@ def get_dados():
 
 @app.route("/cultura", methods=["POST"])
 def set_cultura():
-    nova_cultura = request.json.get("cultura")
-    if nova_cultura in regras:
-        dados["cultura"] = nova_cultura
+    cultura = request.json.get("cultura")
+    if cultura in regras:
+        dados["cultura"] = cultura
         return {"ok": True}
-    return {"ok": False}, 400
+    return {"ok": False}
 
 @app.route("/ligar")
 def ligar():
@@ -180,20 +205,14 @@ def desligar():
     return {"ok": True}
 
 # =====================
-# EXECUÇÃO
+# START
 # =====================
 if __name__ == "__main__":
-    # 1. Inicia a thread de clima antes de tudo
     t = threading.Thread(target=tarefa_atualizar_clima, daemon=True)
     t.start()
 
-    # 2. Conecta ao MQTT
-    try:
-        client.connect(MQTT_HOST, MQTT_PORT)
-        client.loop_start()
-    except Exception as e:
-        print(f"Não foi possível conectar ao Broker: {e}")
+    client.connect(MQTT_HOST, MQTT_PORT)
+    client.loop_start()
 
-    # 3. Roda o Flask (Configurado para o Render)
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
