@@ -103,7 +103,7 @@
 
 <div class="chart-container">
   <div class="card">
-    <h3>Gráfico Histórico - Solo (%)</h3>
+    <h3>Gráfico Histórico (Últimas 5 horas) - Solo (%)</h3>
     <canvas id="grafico" height="60"></canvas>
   </div>
 </div>
@@ -126,7 +126,9 @@ function initChart() {
         backgroundColor: 'rgba(59, 130, 246, 0.2)',
         borderWidth: 2,
         tension: 0.3,
-        fill: true
+        fill: true,
+        pointRadius: 2, // 🔥 Deixa os pontos menores para suportar 60 dados sem poluir
+        pointHoverRadius: 5
       }]
     },
     options: {
@@ -140,7 +142,6 @@ function initChart() {
   });
 }
 
-// 🔥 Nova função: Puxa o histórico do banco de dados na hora que abre o site
 async function carregarHistorico() {
   try {
     const res = await fetch('/historico');
@@ -151,7 +152,6 @@ async function carregarHistorico() {
       chart.data.datasets[0].data = h.data;
       chart.update();
       
-      // Trava o tempo do gráfico para ele não adicionar o primeiro ponto da memória em duplicidade
       ultimaAtualizacaoGrafico = Date.now(); 
     }
   } catch (erro) {
@@ -185,15 +185,16 @@ async function atualizar() {
     `;
   }
 
-  // Verifica se já passaram 10 minutos (1.200.000 ms) para atualizar o gráfico com o tempo real
+  // 🔥 Verifica se já passaram 5 minutos (300.000 ms) para atualizar o gráfico localmente
   const agora = Date.now();
   if (agora - ultimaAtualizacaoGrafico >= 300000 || ultimaAtualizacaoGrafico === 0) {
-    const time = new Date().toLocaleTimeString();
+    const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
     chart.data.labels.push(time);
     chart.data.datasets[0].data.push(d.solo);
 
-    if (chart.data.labels.length > 15) {
+    // 🔥 Limite subiu para 60 pontos (5 horas de gráfico)
+    if (chart.data.labels.length > 60) {
       chart.data.labels.shift();
       chart.data.datasets[0].data.shift();
     }
@@ -218,8 +219,8 @@ async function desligar() { await fetch('/desligar'); }
 // --- Ordem de Inicialização ---
 initChart();
 carregarHistorico(); 
-atualizar(); // Puxa os dados dos cards imediatamente para não esperar 3 seg
-setInterval(atualizar, 3000); // Continua puxando os cards a cada 3 seg
+atualizar(); 
+setInterval(atualizar, 3000); // Mantém os textos rápidos (a cada 3s)
 </script>
 
 </body>
