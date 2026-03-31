@@ -4,9 +4,9 @@ import json
 import requests
 import time
 import psycopg2
+from datetime import timedelta
 from flask import Flask, jsonify, request, render_template
 import paho.mqtt.client as mqtt
-from datetime import timedelta
 
 app = Flask(__name__)
 
@@ -50,7 +50,6 @@ def init_db():
         print("🔥 ERRO NO BANCO DE DADOS:", e)
 
 def carregar_ultimo_estado():
-    """Busca a última leitura do banco para não iniciar com zero"""
     global dados
     try:
         conn = psycopg2.connect(DB_URL)
@@ -64,7 +63,7 @@ def carregar_ultimo_estado():
             dados["solo"] = linha[0]
             dados["temp"] = linha[1]
             dados["irrigacao"] = linha[2]
-            print(f"🔄 Último estado recuperado: Solo {linha[0]}% | Temp {linha[1]}°C")
+            print(f"🔄 Último estado: Solo {linha[0]}% | Temp {linha[1]}°C")
     except Exception as e:
         print("🔥 ERRO AO CARREGAR ÚLTIMO ESTADO:", e)
 
@@ -91,6 +90,8 @@ dados = {
     "temp": 0,
     "temp_cidade": 0,
     "chuva": False,
+    "previsao_chuva": False, 
+    "prob_chuva": 0,         
     "cultura": "milho",
     "irrigacao": "OFF",
     "cidade": "-",
@@ -109,36 +110,63 @@ ultima_busca_clima = 0
 ultima_gravacao_db = 0
 
 # =====================
-# CLIMA E IRRIGAÇÃO
+# CLIMA E PREVISÃO
 # =====================
 def buscar_clima():
     global dados
     try:
-        url = "https://api.openweathermap.org/data/2.5/weather"
+        url_atual = "https://api.openweathermap.org/data/2.5/weather"
         params = {"q": CIDADE, "appid": API_KEY, "units": "metric", "lang": "pt_br"}
-        r = requests.get(url, params=params, timeout=5)
-        data = r.json()
+        r_atual = requests.get(url_atual, params=params, timeout=5)
+        
+        url_prev = "https://api.openweathermap.org/data/2.5/forecast"
+        r_prev = requests.get(url_prev, params=params, timeout=5)
 
-        if r.status_code == 200:
+        if r_atual.status_code == 200:
+            data = r_atual.json()
             dados["temp_cidade"] = data["main"]["temp"]
             dados["cidade"] = data["name"]
             dados["icone"] = data["weather"][0]["icon"]
             clima = data["weather"][0]["main"].lower()
             dados["chuva"] = clima in ["rain", "drizzle", "thunderstorm"]
-            print("✅ Clima atualizado!")
-    except Exception as e:
-        print("🔥 ERRO CLIMA:", e)
+        
+        if r_prev.status_code == 200:
+            data_prev = r_prev.json()
+            vai_chover = False
+            prob_max = 0
 
+            for periodo in data_prev["list"][:4]:
+                probabilidade = periodo.get("pop", 0) 
+                if probabilidade > prob_max: prob_max = probabilidade
+                if probabilidade >= 0.6: vai_chover = True
+
+            dados["previsao_chuva"] = vai_chover
+            dados["prob_chuva"] = int(prob_max * 100) 
+            print(f"✅ Previsão: Chance de chuva (12h): {dados['prob_chuva']}%")
+
+    except Exception as e:
+        print("🔥 ERRO CLIMA/PREVISÃO:", e)
+
+# =====================
+# IRRIGAÇÃO INTELIGENTE
+# =====================
 def decidir_irrigacao():
     regra = regras[dados["cultura"]]
-    if dados["chuva"]:
-        return "OFF"
-    if dados["solo"] < regra["min"]:
-        return "ON"
+    
+    if dados["chuva"]: return "OFF"
+        
+    if dados["previsao_chuva"]:
+        if dados["solo"] < (regra["min"] - 10):
+            return "ON" 
+        else:
+            return "OFF" 
+            
+    if dados["solo"] < regra["min"]: return "ON"
+        
     if regra["min"] <= dados["solo"] <= regra["max"]:
-        if dados["temp"] > 30:
-            return "ON"
+        if dados["temp"] > 30: return "ON"
         return "OFF"
+        
     return "OFF"
 
 # =====================
@@ -159,7 +187,6 @@ def on_message(client, userdata, msg):
         dados["irrigacao"] = estado
         client.publish(TOPIC_CONTROLE, estado)
 
-        # Salva no banco a cada 5 minutos (300 segundos)
         agora = time.time()
         if agora - ultima_gravacao_db > 300:
             salvar_no_banco(dados["solo"], dados["temp"], estado)
@@ -192,7 +219,6 @@ def index():
 def get_dados():
     global ultima_busca_clima
     agora = time.time()
-    # 🔥 Busca clima a cada 5 minutos (300 seg)
     if agora - ultima_busca_clima > 300:
         buscar_clima()
         ultima_busca_clima = agora
@@ -203,27 +229,27 @@ def get_historico():
     try:
         conn = psycopg2.connect(DB_URL)
         cursor = conn.cursor()
-        # 🔥 Pega as últimas 60 leituras do banco (5 horas de histórico a cada 5 min)
-        cursor.execute("SELECT solo, data_hora FROM leituras ORDER BY id DESC LIMIT 60")
+        # 🔥 Agora buscamos também a coluna "irrigacao" do banco de dados
+        cursor.execute("SELECT solo, irrigacao, data_hora FROM leituras ORDER BY id DESC LIMIT 60")
         linhas = cursor.fetchall()
         cursor.close()
         conn.close()
 
         linhas.reverse() 
 
-        historico = {"labels": [], "data": []}
+        historico = {"labels": [], "data": [], "status": []}
         for linha in linhas:
             historico["data"].append(linha[0])
+            historico["status"].append(linha[1]) # Guarda se estava ON ou OFF naquele momento
             
-            # 🔥 Pega o horário do banco (UTC) e subtrai 3 horas para o fuso do Brasil
-            hora_local = linha[1] - timedelta(hours=3)
-            historico["labels"].append(hora_local.strftime("%H:%M"))
+            # 🔥 Correção do fuso horário (-3 horas para o Brasil)
+            hora_local = linha[2] - timedelta(hours=3)
+            historico["labels"].append(hora_local.strftime("%H:%M")) 
 
         return jsonify(historico)
-        
     except Exception as e:
         print("Erro ao buscar histórico:", e)
-        return jsonify({"labels": [], "data": []})
+        return jsonify({"labels": [], "data": [], "status": []})
 
 @app.route("/cultura", methods=["POST"])
 def set_cultura():
