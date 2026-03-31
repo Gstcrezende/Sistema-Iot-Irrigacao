@@ -32,6 +32,11 @@
       border-radius: 12px;
     }
 
+    /* 🔥 Nova classe para alinhar o gráfico embaixo */
+    .chart-container {
+      padding: 0 20px 20px 20px;
+    }
+
     .badge {
       padding: 5px 10px;
       border-radius: 6px;
@@ -47,6 +52,8 @@
       border-radius: 8px;
       border: none;
       cursor: pointer;
+      color: white;
+      font-weight: bold;
     }
 
     .btn-on { background: #22c55e; }
@@ -58,6 +65,7 @@
       border-radius: 8px;
       background: #334155;
       color: white;
+      border: 1px solid #475569;
     }
 
     img {
@@ -71,7 +79,6 @@
 <header>🌱 AgroTech IoT Inteligente</header>
 
 <div class="grid">
-
   <div class="card">
     <h3>Status</h3>
     <div id="status"></div>
@@ -79,15 +86,12 @@
 
   <div class="card">
     <h3>Controle</h3>
-
     <select onchange="mudarCultura()" id="cultura">
       <option value="milho">🌽 Milho</option>
       <option value="soja">🌱 Soja</option>
       <option value="cafe">☕ Café</option>
     </select>
-
     <br><br>
-
     <button class="btn-on" onclick="ligar()">Ligar</button>
     <button class="btn-off" onclick="desligar()">Desligar</button>
   </div>
@@ -96,16 +100,18 @@
     <h3>Clima da Cidade</h3>
     <div id="clima"></div>
   </div>
+</div>
 
+<div class="chart-container">
   <div class="card">
-    <h3>Gráfico Solo</h3>
-    <canvas id="grafico"></canvas>
+    <h3>Gráfico Histórico - Solo (%)</h3>
+    <canvas id="grafico" height="60"></canvas>
   </div>
-
 </div>
 
 <script>
 let chart;
+let ultimaAtualizacaoGrafico = 0; // Controle de tempo para o gráfico
 
 function initChart() {
   const ctx = document.getElementById("grafico");
@@ -117,9 +123,20 @@ function initChart() {
       datasets: [{
         label: 'Umidade Solo (%)',
         data: [],
+        borderColor: '#3b82f6',
+        backgroundColor: 'rgba(59, 130, 246, 0.2)',
         borderWidth: 2,
-        tension: 0.3
+        tension: 0.3,
+        fill: true
       }]
+    },
+    options: {
+      scales: {
+        y: {
+          min: 0, // 🔥 Garante que o eixo Y nunca tenha números negativos
+          max: 100 // Opcional: Garante que o limite seja sempre 100%
+        }
+      }
     }
   });
 }
@@ -128,14 +145,14 @@ async function atualizar() {
   const res = await fetch('/dados');
   const d = await res.json();
 
-  // 🔥 remove decimal da temperatura
   const tempCidade = Math.round(d.temp_cidade);
 
+  // Atualiza os textos da tela em tempo real (a cada 3s)
   document.getElementById("status").innerHTML = `
-    🌱 Cultura: ${d.cultura}<br>
-    💧 Solo: ${d.solo}%<br>
-    🌡️ Temp Sensor: ${d.temp}°C<br>
-    🚿 Irrigação:
+    🌱 Cultura: ${d.cultura.charAt(0).toUpperCase() + d.cultura.slice(1)}<br>
+    💧 Solo: ${Math.round(d.solo)}%<br>
+    🌡️ Temp Sensor: ${Math.round(d.temp)}°C<br>
+    🚿 Irrigação: 
     <span class="badge ${d.irrigacao === 'ON' ? 'on' : 'off'}">
       ${d.irrigacao}
     </span>
@@ -148,22 +165,26 @@ async function atualizar() {
     <img src="https://openweathermap.org/img/wn/${d.icone}@2x.png">
   `;
 
-  const time = new Date().toLocaleTimeString();
+  // 🔥 Verifica se já passaram 20 minutos (1.200.000 milissegundos) para atualizar o gráfico
+  const agora = Date.now();
+  if (agora - ultimaAtualizacaoGrafico >= 1200000 || ultimaAtualizacaoGrafico === 0) {
+    const time = new Date().toLocaleTimeString();
 
-  chart.data.labels.push(time);
-  chart.data.datasets[0].data.push(d.solo);
+    chart.data.labels.push(time);
+    chart.data.datasets[0].data.push(d.solo);
 
-  if (chart.data.labels.length > 15) {
-    chart.data.labels.shift();
-    chart.data.datasets[0].data.shift();
+    if (chart.data.labels.length > 15) {
+      chart.data.labels.shift();
+      chart.data.datasets[0].data.shift();
+    }
+
+    chart.update();
+    ultimaAtualizacaoGrafico = agora;
   }
-
-  chart.update();
 }
 
 async function mudarCultura() {
   const cultura = document.getElementById("cultura").value;
-
   await fetch('/cultura', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
@@ -175,6 +196,8 @@ async function ligar() { await fetch('/ligar'); }
 async function desligar() { await fetch('/desligar'); }
 
 initChart();
+
+// Busca os dados em tempo real a cada 3 segundos (mas o gráfico agora tem trava interna)
 setInterval(atualizar, 3000);
 </script>
 
