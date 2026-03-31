@@ -192,7 +192,7 @@ def get_dados():
     global ultima_busca_clima
     agora = time.time()
     # Busca clima a cada 20 minutos (1200 seg)
-    if agora - ultima_busca_clima > 1200:
+    if agora - ultima_busca_clima > 300:
         buscar_clima()
         ultima_busca_clima = agora
     return jsonify(dados)
