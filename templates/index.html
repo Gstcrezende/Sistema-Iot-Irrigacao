@@ -5,147 +5,37 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
   <style>
-    body {
-      margin: 0;
-      font-family: Arial;
-      background: #0f172a;
-      color: white;
-    }
-
-    header {
-      padding: 20px;
-      text-align: center;
-      font-size: 24px;
-      background: #020617;
-    }
-
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-      gap: 20px;
-      padding: 20px;
-    }
-
-    .card {
-      background: #1e293b;
-      padding: 20px;
-      border-radius: 12px;
-    }
-
-    .badge {
-      padding: 5px 10px;
-      border-radius: 6px;
-      font-weight: bold;
-    }
-
-    .on { background: #22c55e; }
-    .off { background: #ef4444; }
+    body { background:#0f172a; color:white; font-family:Arial; }
+    .card { background:#1e293b; padding:20px; margin:10px; border-radius:10px; }
   </style>
 </head>
 
 <body>
 
-<header>🌱 AgroTech IoT Inteligente</header>
+<h2>🌱 AgroTech IoT</h2>
 
-<div class="grid">
-
-  <div class="card">
-    <h3>Status</h3>
-    <div id="status"></div>
-  </div>
-
-  <div class="card">
-    <h3>Controle</h3>
-
-    <select onchange="mudarCultura()" id="cultura">
-      <option value="milho">🌽 Milho</option>
-      <option value="soja">🌱 Soja</option>
-      <option value="cafe">☕ Café</option>
-    </select>
-
-    <br><br>
-
-    <button onclick="ligar()">Ligar</button>
-    <button onclick="desligar()">Desligar</button>
-  </div>
-
-  <div class="card">
-    <h3>Clima da Cidade</h3>
-    <div id="clima"></div>
-  </div>
-
-  <div class="card">
-    <h3>Gráfico Solo</h3>
-    <canvas id="grafico"></canvas>
-  </div>
-
-</div>
+<div class="card" id="status"></div>
+<div class="card" id="clima"></div>
 
 <script>
-let chart;
-
-function initChart() {
-  const ctx = document.getElementById("grafico");
-
-  chart = new Chart(ctx, {
-    type: 'line',
-    data: {
-      labels: [],
-      datasets: [{
-        label: 'Umidade (%)',
-        data: [],
-        borderWidth: 2
-      }]
-    }
-  });
-}
-
-async function atualizar() {
-  const res = await fetch('/dados');
-  const d = await res.json();
+async function atualizar(){
+  const r = await fetch('/dados');
+  const d = await r.json();
 
   document.getElementById("status").innerHTML = `
-    🌱 Cultura: ${d.cultura}<br>
-    💧 Solo: ${d.solo}%<br>
-    🌡️ Temp Sensor: ${d.temp}°C<br>
-    🚿 Irrigação:
-    <span class="${d.irrigacao === 'ON' ? 'on' : 'off'}">
-      ${d.irrigacao}
-    </span>
+    Solo: ${d.solo}%<br>
+    Irrigação: ${d.irrigacao}
   `;
 
   document.getElementById("clima").innerHTML = `
     📍 ${d.cidade}<br>
     🌡️ ${d.temp_cidade}°C<br>
-    🌧️ ${d.chuva ? "Chovendo" : "Sem chuva"}<br>
+    🌧️ ${d.chuva}<br>
     📌 ${d.lat}, ${d.lon}<br>
     <img src="https://openweathermap.org/img/wn/${d.icone}@2x.png">
   `;
-
-  chart.data.labels.push(new Date().toLocaleTimeString());
-  chart.data.datasets[0].data.push(d.solo);
-
-  if (chart.data.labels.length > 15) {
-    chart.data.labels.shift();
-    chart.data.datasets[0].data.shift();
-  }
-
-  chart.update();
 }
 
-async function mudarCultura() {
-  const cultura = document.getElementById("cultura").value;
-  await fetch('/cultura', {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({cultura})
-  });
-}
-
-async function ligar(){ await fetch('/ligar'); }
-async function desligar(){ await fetch('/desligar'); }
-
-initChart();
 setInterval(atualizar, 3000);
 </script>
 
